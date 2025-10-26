@@ -1,7 +1,0 @@
-flask-sqlalchemy
-Flask
-Flask-JWT-Extended
-Flask-Cors
-mysql-connector-python
-Flask-JWT-Extended==4.5.3
-enum34==1.1.10  # For Python < 3.4
