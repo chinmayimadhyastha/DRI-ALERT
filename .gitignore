@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+venv/
+env/
+.venv
+
+# Environment Variables (CRITICAL!)
+.env
+*.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Database
+*.db
+*.sqlite
+
+# Machine Learning Models
+*.dat
+*.h5
+shape_predictor_68_face_landmarks.dat
+
+# Node modules
+node_modules/
+ 

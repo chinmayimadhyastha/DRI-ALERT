@@ -1,0 +1,18 @@
+CREATE DATABASE IF NOT EXISTS drowsiness_db;
+USE drowsiness_db;
+DROP TABLE IF EXISTS detection_logs;
+DROP TABLE IF EXISTS user;
+
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(120) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'driver'
+);
+
+CREATE TABLE detections (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_email VARCHAR(120) NOT NULL,
+    status ENUM('drowsy', 'awake') NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+);

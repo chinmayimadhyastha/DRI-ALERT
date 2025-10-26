@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DriAlert Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+        }
+
+        h1 {
+            color: white;
+            margin-bottom: 2rem;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .video-container {
+            position: relative;
+            margin-bottom: 2rem;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        #video {
+            display: block;
+            width: 640px;
+            height: 480px;
+            background: #000;
+        }
+
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 640px;
+            height: 480px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        button {
+            padding: 1rem 2rem;
+            font-size: 1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #start-btn {
+            background: #10b981;
+            color: white;
+        }
+
+        #stop-btn {
+            background: #ef4444;
+            color: white;
+        }
+
+        .metrics {
+            background: white;
+            padding: 2rem;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            min-width: 400px;
+        }
+
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .metric-row:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .metric-label {
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .metric-value {
+            font-family: 'Courier New', monospace;
+            font-size: 1.2rem;
+            color: #667eea;
+        }
+
+        #alert-box {
+            position: fixed;
+            top: 2rem;
+            right: 2rem;
+            background: #ef4444;
+            color: white;
+            padding: 1.5rem 2rem;
+            border-radius: 12px;
+            font-size: 1.2rem;
+            font-weight: 700;
+            box-shadow: 0 10px 30px rgba(239, 68, 68, 0.5);
+            animation: pulse 1s infinite;
+            z-index: 1000;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.05);
+            }
+        }
+
+        #status {
+            font-size: 1.5rem;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            border-radius: 8px;
+            background: #f3f4f6;
+        }
+
+        #status.alert {
+            background: #10b981;
+            color: white;
+        }
+
+        #status.warning {
+            background: #f59e0b;
+            color: white;
+        }
+
+        #status.drowsy {
+            background: #ef4444;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🚗 DriAlert - Drowsiness Detection Monitor</h1>
+
+    <div class="video-container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div class="controls">
+        <button id="start-btn">▶️ Start Monitoring</button>
+        <button id="stop-btn" disabled>⏹️ Stop Monitoring</button>
+    </div>
+
+    <div class="metrics">
+        <div id="status">Ready to Start</div>
+
+        <div class="metric-row">
+            <span class="metric-label">👁️ Eye Aspect Ratio (EAR):</span>
+            <span class="metric-value" id="ear-value">0.000</span>
+        </div>
+
+        <div class="metric-row">
+            <span class="metric-label">😮 Mouth Aspect Ratio (MAR):</span>
+            <span class="metric-value" id="mar-value">0.000</span>
+        </div>
+
+        <div class="metric-row">
+            <span class="metric-label">👁️ Blinks:</span>
+            <span class="metric-value" id="blink-count">0</span>
+        </div>
+
+        <div class="metric-row">
+            <span class="metric-label">😮 Yawns:</span>
+            <span class="metric-value" id="yawn-count">0</span>
+        </div>
+    </div>
+
+    <div id="alert-box" style="display: none;">⚠️ ALERT</div>
+
+    <!-- Scripts at the END so DOM loads first -->
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
+    <script src="monitor.js"></script>
+</body>
+
+</html>
