@@ -29,22 +29,21 @@ class DetectionEventManager {
             }
 
             const eventData = {
-                driver_name: this.getDriverName(),
-                eye_aspect_ratio: detectionData.ear || 0,
-                mouth_aspect_ratio: detectionData.mar || 0,
-                eye_closure_duration: detectionData.eyeClosureDuration || 0,
-                yawn_duration: detectionData.yawnDuration || 0,
-                drowsiness_score: detectionData.drowsinessScore || 0,
-                risk_level: this.calculateRiskLevel(detectionData),
-                alert_triggered: detectionData.alertTriggered || false,
-                head_pose: detectionData.headPose || {},
-                blink_count: ++this.totalBlinks,
-                yawn_count: detectionData.isYawning ? ++this.totalYawns : this.totalYawns,
-                session_id: this.sessionId,
-                session_duration: (Date.now() - this.sessionStart) / 1000,
-                total_detections: ++this.detectionCount,
-                location: await this.getLocation(),
-                image_data: imageData
+                // Backend expects these exact field names
+                eyeaspectratio: detectionData.ear || 0,
+                mouthaspectratio: detectionData.mar || 0,
+                eyeclosureduration: detectionData.eyeClosureDuration || 0,
+                yawnduration: detectionData.yawnDuration || 0,
+                drowsinessscore: detectionData.drowsinessScore || 0,
+                risklevel: this.calculateRiskLevel(detectionData),
+                status: this.calculateRiskLevel(detectionData),
+                alerttriggered: detectionData.alertTriggered || false,
+                headposedata: JSON.stringify(detectionData.headPose || {}),
+                sessionid: this.sessionId,
+                sessionduration: (Date.now() - this.sessionStart) / 1000,
+                totaldetections: ++this.detectionCount,
+                drivername: this.getDriverName(),
+                imagedata: imageData
             };
 
             if (this.isOnline) {
@@ -69,10 +68,8 @@ class DetectionEventManager {
         return null;
     }
     
-    const response = await fetch('http://localhost:5000/api/auth/save-detection', {
+    const response = await fetch('http://localhost:5000/api/detection/save-detection', {
         method: 'POST',
-        mode: 'cors', // ADD THIS
-        credentials: 'include', // ADD THIS
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
@@ -112,22 +109,26 @@ class DetectionEventManager {
     }
 
     getDriverName() {
-        const session = localStorage.getItem('driAlert_session') || localStorage.getItem('driAlert_admin_session');
-        if (session) {
-            const data = JSON.parse(session);
-            return data.user?.email || 'Unknown Driver';
-        }
-        return 'Unknown Driver';
+    // ✅ FIXED - Use correct session key name
+    const session = localStorage.getItem('driAlertsession') ||  // Changed from 'driAlert_session'
+                   localStorage.getItem('driAlert_admin_session');
+    if (session) {
+        const data = JSON.parse(session);
+        return data.user?.email || 'Unknown Driver';
     }
+    return 'Unknown Driver';
+}
 
     getAuthToken() {
-        const session = localStorage.getItem('driAlert_session') || localStorage.getItem('driAlert_admin_session');
-        if (session) {
-            const data = JSON.parse(session);
-            return data.token;
-        }
-        return null;
+    // ✅ FIXED - Use correct session key name
+    const session = localStorage.getItem('driAlertsession') ||  // Changed from 'driAlert_session'
+                   localStorage.getItem('driAlert_admin_session');
+    if (session) {
+        const data = JSON.parse(session);
+        return data.token;
     }
+    return null;
+}
 
     async getLocation() {
         try {

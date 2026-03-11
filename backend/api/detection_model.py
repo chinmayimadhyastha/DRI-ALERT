@@ -14,8 +14,8 @@ class DetectionEvent:
                  eye_aspect_ratio=None, mouth_aspect_ratio=None, eye_closure_duration=None,
                  yawn_duration=None, drowsiness_score=None, risk_level=None,
                  alert_triggered=None, session_id=None, session_duration=None,
-                 total_detections=None):
-        
+                 total_detections=None, head_pose_data=None):  # <-- Add here
+
         if detection_data:
             self.user_email = user_email
             self.driver_name = driver_name
@@ -26,10 +26,10 @@ class DetectionEvent:
             self.drowsiness_score = detection_data.get("drowsiness_score", 0.0)
             self.risk_level = detection_data.get("risk_level", "Low")
             self.alert_triggered = detection_data.get("alert_triggered", False)
-            self.image_data = image_data
             self.session_id = detection_data.get("session_id")
             self.session_duration = detection_data.get("session_duration", 0.0)
             self.total_detections = detection_data.get("total_detections", 0)
+            self.head_pose_data = detection_data.get("head_pose_data", None)
         else:
             self.user_email = user_email
             self.driver_name = driver_name
@@ -40,14 +40,14 @@ class DetectionEvent:
             self.drowsiness_score = drowsiness_score or 0.0
             self.risk_level = risk_level or "Low"
             self.alert_triggered = alert_triggered or False
-            self.image_data = image_data
             self.session_id = session_id
             self.session_duration = session_duration or 0.0
             self.total_detections = total_detections or 0
+            self.head_pose_data = head_pose_data
 
+        self.image_data = image_data
         self.timestamp = datetime.utcnow()
         self.created_at = datetime.utcnow()
-        self.image_data = image_data
 
     def save(self):
         """Save detection event to MongoDB"""
@@ -55,33 +55,37 @@ class DetectionEvent:
             db = get_mongo_db()
             if db is None:
                 logger.error("❌ Database connection failed in DetectionEvent.save()")
-                return None
-
+                raise RuntimeError("Database not connected")
+            
             event_data = {
                 'user_email': self.user_email,
                 'driver_name': self.driver_name,
                 'timestamp': self.timestamp,
-                'eye_aspect_ratio': self.eye_aspect_ratio,
-                'mouth_aspect_ratio': self.mouth_aspect_ratio,
-                'eye_closure_duration': self.eye_closure_duration,
-                'yawn_duration': self.yawn_duration,
-                'drowsiness_score': self.drowsiness_score,
-                'risk_level': self.risk_level,
-                'alert_triggered': self.alert_triggered,
-                'session_id': self.session_id,
-                'session_duration': self.session_duration,
-                'total_detections': self.total_detections,
-                'image_data': self.image_data,
-                'head_pose_data': self.head_pose_data
-            }
-
+                'detection_data': {
+                    'ear': self.eye_aspect_ratio,
+                    'mar': self.mouth_aspect_ratio,
+                    'eye_duration': self.eye_closure_duration,
+                    'yawn_duration': self.yawn_duration,
+                    'drowsiness_score': self.drowsiness_score,
+                    'risk_level': self.risk_level,
+                    'alert_triggered': self.alert_triggered,
+                    'head_pose_data': self.head_pose_data
+                    },
+                'session_data': {
+                    'session_id': self.session_id,
+                    'session_duration': self.session_duration,
+                    'total_detections': self.total_detections
+                    },
+                    'image_data': self.image_data
+                    }
             result = db.detection_events.insert_one(event_data)
             self._id = result.inserted_id
             logger.info(f"✅ Detection event saved with ID: {self._id}")
             return str(self._id)
+        
         except Exception as e:
             logger.error(f"❌ Error saving detection event: {str(e)}")
-            return None
+            raise
 
     @staticmethod
     def get_all_events(limit=100):

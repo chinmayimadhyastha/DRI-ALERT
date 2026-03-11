@@ -24,87 +24,148 @@ def admin_required(f):
 @jwt_required()
 @admin_required
 def get_users():
-    """Get all users (admin only)"""
+    """Get all users with real-time monitoring status (admin only)"""
     try:
-        users = User.get_all_users()
+        db = get_mongo_db()
+        users_collection = db['users']
+        
+        # Users are "active" if they sent a heartbeat in last 10 seconds
+        active_threshold = datetime.utcnow() - timedelta(seconds=10)
+        
+        users_cursor = users_collection.find({}, {
+            'password_hash': 0,  # Exclude password
+            '_id': 0
+        })
+        
         user_list = []
-        for user in users:
+        for user in users_cursor:
+            # Check if user is currently monitoring
+            last_seen = user.get('last_seen')
+            is_monitoring = user.get('is_monitoring', False)
+            
+            # Active = heartbeat within last 10 seconds AND is_monitoring flag
+            is_active = False
+            if last_seen and is_monitoring:
+                if isinstance(last_seen, datetime):
+                    is_active = last_seen > active_threshold
+                elif isinstance(last_seen, str):
+                    try:
+                        last_seen_dt = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
+                        is_active = last_seen_dt > active_threshold
+                    except:
+                        pass
+            
             user_list.append({
                 'email': user.get('email'),
-                'role': user.get('role'),
-                'is_active': user.get('is_active'),
-                'created_at': user.get('created_at').isoformat() if user.get('created_at') else None
+                'role': user.get('role', 'driver'),
+                'is_active': is_active,  # ✅ Real-time monitoring status
+                'last_seen': last_seen.isoformat() if isinstance(last_seen, datetime) else last_seen,
+                'created_at': user.get('created_at', datetime.now().isoformat())
             })
+        
+        logger.info(f"✅ Retrieved {len(user_list)} users with real-time status")
         return jsonify({'users': user_list}), 200
+        
     except Exception as e:
         logger.error(f"Admin users error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@admin_bp.route('/logs', methods=['GET'])
-@jwt_required()
-@admin_required
-def get_all_logs():
-    """Get all detection logs (admin only)"""
-    try:
-        page = request.args.get('page', 1, type=int)
-        limit = request.args.get('limit', 50, type=int)
-        
-        events = DetectionEvent.get_all_events(limit=limit)
-        logs_data = []
-        
-        for event in events:
-            user_email = event.get('user_email', 'Unknown')
-            
-            logs_data.append({
-                'id': str(event.get('_id', '')),
-                'user_email': user_email,
-                'detection_data': event.get('detection_data', {}),
-                'session_data': event.get('session_data', {}),
-                'timestamp': event.get('timestamp')
-            })
-        
-        return jsonify({
-            'logs': logs_data,
-            'total': len(logs_data)
-        }), 200
-    
-    except Exception as e:
-        logger.error(f"Admin logs error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Failed to retrieve users', 'details': str(e)}), 500
 
 @admin_bp.route('/analytics', methods=['GET'])
 @jwt_required()
 @admin_required
-def admin_analytics():
+def get_analytics():
     """Get system analytics (admin only)"""
     try:
         db = get_mongo_db()
-        
-        # Get total counts
-        total_users = db.users.count_documents({})
-        total_detections = db.detection_events.count_documents({})
-        
-        # FIXED: Properly closed pipeline list
-        pipeline = [
-            {'$group': {'_id': '$risk_level', 'count': {'$sum': 1}}}
-        ]
-        
-        status_counts = list(db.detection_events.aggregate(pipeline))
-        status_data = {item['_id']: item['count'] for item in status_counts}
-        
-        # Get recent activity (last 7 days)
+        if db is None:
+            return jsonify({"error": "Database not connected"}), 500
+
+        users_collection = db['users']
+        detections_collection = db['detection_events']
+
+        total_users = users_collection.count_documents({})
+        total_detections = detections_collection.count_documents({})
+
         week_ago = datetime.utcnow() - timedelta(days=7)
-        recent_activity = db.detection_events.count_documents({
+        recent_activity = detections_collection.count_documents({
             'timestamp': {'$gte': week_ago}
         })
+
+        risk_pipeline = [
+            {'$group': {
+                '_id': '$detection_data.risk_level',
+                'count': {'$sum': 1}
+            }}
+        ]
         
-        return jsonify({
+        risk_counts = {}
+        for result in detections_collection.aggregate(risk_pipeline):
+            risk_level = result['_id'] or 'Unknown'
+            risk_counts[risk_level] = result['count']
+
+        for level in ['Low', 'Medium', 'High', 'Critical', 'Unknown']:
+            risk_counts.setdefault(level, 0)
+
+        analytics = {
             'total_users': total_users,
             'total_detections': total_detections,
-            'status_counts': status_data,
-            'recent_activity': recent_activity
-        }), 200
-    
+            'recent_activity': recent_activity,
+            'status_counts': risk_counts
+        }
+
+        logger.info(f"✅ Analytics: {analytics}")
+        return jsonify(analytics), 200
     except Exception as e:
         logger.error(f"Admin analytics error: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve analytics', 'details': str(e)}), 500
+
+@admin_bp.route('/logs', methods=['GET'])
+@jwt_required()
+@admin_required
+def get_detection_logs():
+    """Get detection logs (admin only)"""
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        
+        db = get_mongo_db()
+        detections_collection = db['detection_events']
+        
+        # Get recent detections, sorted by timestamp descending
+        detections_cursor = detections_collection.find({}).sort('timestamp', -1).limit(limit)
+        
+        logs = []
+        for detection in detections_cursor:
+            logs.append({
+                'id': str(detection.get('_id', '')),
+                'user_email': detection.get('user_email', 'Unknown'),
+                'timestamp': detection.get('timestamp').isoformat() if isinstance(detection.get('timestamp'), datetime) else str(detection.get('timestamp', '')),
+                'detection_data': detection.get('detection_data', {}),
+                'session_data': detection.get('session_data', {})
+                })
+
+        logger.info(f"✅ Retrieved {len(logs)} detection logs")
+        return jsonify({'logs': logs}), 200
+        
+    except Exception as e:
+        logger.error(f"Admin logs error: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve logs', 'details': str(e)}), 500
+
+@admin_bp.route('/stats', methods=['GET'])
+@jwt_required()
+@admin_required
+def get_system_stats():
+    """Get system statistics (admin only)"""
+    try:
+        db = get_mongo_db()
+        
+        # Database stats
+        stats = {
+            'database': db.name,
+            'collections': db.list_collection_names()
+        }
+        
+        return jsonify(stats), 200
+        
+    except Exception as e:
+        logger.error(f"Stats error: {str(e)}")
         return jsonify({'error': str(e)}), 500

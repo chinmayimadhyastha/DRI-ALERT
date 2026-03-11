@@ -1,12 +1,16 @@
 import json
 import base64
 import os
+import logging
 from flask import Blueprint, request, jsonify, send_file
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import User
-from datetime import datetime
+from datetime import datetime, timezone
 from mongodb_config import get_mongo_db
+from detection_model import DetectionEvent
+
+logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -28,7 +32,7 @@ def save_driver_photo(email, base64_image, status):
         if ',' in base64_image:
             base64_image = base64_image.split(',')[1]
         
-        image_data = base64.b64decode(base64_image)
+        image_data = image_data = data.get("image_data") or data.get("frame") or data.get("image")
         
         with open(filepath, 'wb') as f:
             f.write(image_data)
@@ -42,25 +46,49 @@ def save_driver_photo(email, base64_image, status):
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
+    """Register new user with duplicate prevention"""
     try:
         data = request.get_json()
-        email = data.get('email')
-        password = data.get('password')
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '')
         
-        if User.find_by_email(email):
-            return jsonify({'error': 'User already exists'}), 400
+        # Validate input
+        if not email or not password:
+            return jsonify({'error': 'Email and password required'}), 400
         
+        if len(password) < 6:
+            return jsonify({'error': 'Password must be at least 6 characters'}), 400
+        
+        # Check for existing user
+        existing_user = User.find_by_email(email)
+        if existing_user:
+            logger.warning(f"⚠️ Registration attempt for existing user: {email}")
+            return jsonify({'error': 'User already exists with this email'}), 400
+        
+        # Create new user
         user = User(email, password)
+        
         if user.save():
+            logger.info(f"✅ New user registered: {email}")
             access_token = create_access_token(identity=email)
             return jsonify({
                 'message': 'User created successfully',
-                'access_token': access_token
+                'access_token': access_token,
+                'user': {'email': email, 'role': 'driver'}
             }), 201
         else:
-            return jsonify({'error': 'Failed to create user'}), 500
+            logger.error(f"❌ Failed to save user: {email}")
+            return jsonify({'error': 'Failed to create user. Please try again.'}), 500
+            
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        # Check if it's a duplicate key error from MongoDB
+        if 'duplicate key error' in str(e).lower() or 'E11000' in str(e):
+            logger.warning(f"⚠️ Duplicate key error for: {data.get('email')}")
+            return jsonify({'error': 'User already exists with this email'}), 400
+        
+        logger.error(f"❌ Registration error: {str(e)}")
+        return jsonify({'error': 'Registration failed. Please try again.'}), 500
+
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
@@ -120,53 +148,43 @@ def admin_login():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@auth_bp.route('/save-detection', methods=['POST', 'OPTIONS'])
+@auth_bp.route('/save-detection', methods=['POST'])
+@jwt_required()
 def save_detection():
-    """Save detection event to database WITHOUT JWT requirement"""
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
     try:
+        current_user_email = get_jwt_identity()
         data = request.get_json()
-        driver_name = data.get("driver_name", "Unknown Driver")
-        print(f"💾 Saving detection for: {driver_name}")
-        
-        db = get_mongo_db()
-        if db is None:
-            return jsonify({"error": "Database connection failed"}), 500
-        
-        detection_record = {
-            "driver_name": driver_name,
-            "user_email": driver_name,
-            "eye_aspect_ratio": data.get("eye_aspect_ratio", 0.0),
-            "mouth_aspect_ratio": data.get("mouth_aspect_ratio", 0.0),
-            "drowsiness_score": data.get("drowsiness_score", 0.0),
-            "risk_level": data.get("risk_level", "Low"),
-            "status": data.get("status", "Alert"),
-            "alert_triggered": data.get("alert_triggered", False),
-            "eye_closure_duration": data.get("eye_closure_duration", 0.0),
-            "session_id": data.get("session_id", ""),
-            "session_duration": data.get("session_duration", 0),
-            "total_detections": data.get("total_detections", 0),
-            "timestamp": datetime.utcnow()
+
+        detection_data = {
+            'ear': float(data.get('eye_aspect_ratio', 0)),
+            'mar': float(data.get('mouth_aspect_ratio', 0)),
+            'drowsiness_score': float(data.get('drowsiness_score', 0)),
+            'risk_level': data.get('risk_level', 'Unknown'),
+            'status': data.get('status', 'UNKNOWN'),
+            'alert_triggered': data.get('alert_triggered', False),
+            'eye_duration': float(data.get('eye_closure_duration', 0)),
+            'yawn_duration': float(data.get('yawn_duration', 0)),
+            'session_id': data.get('session_id'),
+            'session_duration': data.get('session_duration', 0),
+            'total_detections': data.get('total_detections', 0)
         }
-        
-        image_data = data.get("image_data")
-        if image_data:
-            detection_record["image_data"] = image_data
-        
-        result = db.detection_events.insert_one(detection_record)
-        print(f"✅ Detection saved: {result.inserted_id}, Risk: {detection_record['risk_level']}")
-        
+
+        detection = DetectionEvent(
+            user_email=current_user_email,
+            driver_name=data.get('driver_name', current_user_email),
+            detection_data=detection_data,
+            image_data=data.get('image_data')
+        )
+
+        saved_id = detection.save()
         return jsonify({
-            "message": "Detection saved successfully",
-            "event_id": str(result.inserted_id)
+            'message': 'Detection saved successfully',
+            'detection_id': saved_id,
+            'risk_level': data.get('risk_level')
         }), 201
     except Exception as e:
-        print(f"❌ Error saving detection: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"❌ Save detection error: {str(e)}")
+        return jsonify({'error': 'Failed to save detection', 'details': str(e)}), 500
 
 @auth_bp.route('/get-detections', methods=['GET'])
 @jwt_required()
@@ -177,6 +195,9 @@ def get_user_detections():
         limit = request.args.get('limit', 50, type=int)
         
         db = get_mongo_db()
+        if db is None:
+            return jsonify({"error": "Database not connected"}), 500
+
         collection = db.detection_events
         
         events = list(collection.find({"user_email": current_user})

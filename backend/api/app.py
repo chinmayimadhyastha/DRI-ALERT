@@ -29,10 +29,10 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 
 # ✅ FIXED: Simple CORS - let flask-cors handle everything
 CORS(app, 
-     resources={r"/api/*": {"origins": "*"}},
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-     supports_credentials=False)
+         resources={r"/api/*": {"origins": "*"}},
+         supports_credentials=True,  # ✅ ADD THIS
+         allow_headers=["Content-Type", "Authorization"],  # ✅ ADD THIS
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])  # ✅ ADD THIS
 
 # Register blueprints
 app.register_blueprint(auth_bp, url_prefix='/api/auth')

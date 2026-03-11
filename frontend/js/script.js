@@ -561,7 +561,6 @@ async handleLogin(e) {
         if (response.ok) {
             const data = await response.json();
             
-            // Save session
             localStorage.setItem('driAlertsession', JSON.stringify({
                 user: { email, role: 'driver' },
                 token: data.access_token,
@@ -569,16 +568,14 @@ async handleLogin(e) {
             }));
             
             this.showToast('success', 'Login Successful', 'Welcome back!');
+            // optional: briefly show main page
             this.showPage('main-page');
-            
-            // Update navigation
-            if (window.authManager) {
-                window.authManager.loadSession();
-                window.authManager.updateNavigation();
-            }
+            this.updateNavbarForAuth();
             
             return true;
-        } else {
+        }
+        
+        else {
             const errorData = await response.json();
             this.showToast('error', 'Login Failed', errorData.error || 'Invalid credentials');
             return false;
@@ -636,36 +633,61 @@ async handleLogin(e) {
     }
 
     // In your handleAdminLogin function, after successful login:
+    // FIXED: Complete Admin Login Handler with Dashboard Loading
 async handleAdminLogin(e) {
     e.preventDefault();
     const btn = e.target.querySelector('button[type="submit"]');
     const email = e.target.email.value;
     const password = e.target.password.value;
 
-    const response = await fetch('http://localhost:5000/api/auth/admin-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-    });
+    this.setButtonLoading(btn, true);
 
-    if (response.ok) {
-        const data = await response.json();
-        
-        // Save admin session
-        localStorage.setItem('driAlertadminsession', JSON.stringify({
-            user: { email, role: 'admin' },
-            token: data.access_token,
-            expires: Date.now() + (8 * 60 * 60 * 1000) // 8 hours
-        }));
+    try {
+        const response = await fetch('http://localhost:5000/api/auth/admin-login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
 
-        authManager.showToast('Admin access granted!', 'success');
-        showPage('admin-dashboard');
+        if (response.ok) {
+            const data = await response.json();
+            
+            // Save admin session
+            localStorage.setItem('driAlertadminsession', JSON.stringify({
+                user: { email, role: 'admin' },
+                token: data.access_token,
+                expires: Date.now() + (8 * 60 * 60 * 1000)
+            }));
 
-        // ✅ LOAD DASHBOARD DATA
-        setTimeout(async () => {
-            await adminDashboard.loadDashboard();
-            adminDashboard.startAutoRefresh(30000); // Refresh every 30 seconds
-        }, 500);
+            this.showToast('success', 'Admin Access', 'Welcome to admin dashboard');
+            this.showPage('admin-dashboard');
+
+            // ✅ CRITICAL: Load dashboard data
+            setTimeout(async () => {
+                console.log('🔄 Loading admin dashboard...');
+                if (window.adminDashboard) {
+                    try {
+                        await adminDashboard.loadDashboard();
+                        adminDashboard.startAutoRefresh(30000); // Refresh every 30s
+                        console.log('✅ Dashboard loaded successfully!');
+                    } catch (error) {
+                        console.error('❌ Dashboard load error:', error);
+                        this.showToast('error', 'Dashboard Error', 'Failed to load dashboard data');
+                    }
+                } else {
+                    console.error('❌ adminDashboard object not found!');
+                    this.showToast('error', 'Dashboard Error', 'Dashboard script not loaded');
+                }
+            }, 500);
+        } else {
+            const errorData = await response.json();
+            this.showToast('error', 'Login Failed', errorData.error || 'Invalid admin credentials');
+        }
+    } catch (error) {
+        console.error('Admin login error:', error);
+        this.showToast('error', 'Login Failed', 'Connection error. Please try again.');
+    } finally {
+        this.setButtonLoading(btn, false);
     }
 }
 
@@ -753,11 +775,55 @@ async handleAdminLogin(e) {
             }, 500);
         }
     }
+
+    updateNavbarForAuth() {
+  const authButtons = document.querySelector('.auth-buttons');
+  if (!authButtons) return;
+  
+  const loginBtns = authButtons.querySelectorAll('.login-btn, .signup-btn, .admin-btn');
+  const userMenu = document.getElementById('userMenu');
+  const userNameSpan = document.getElementById('userName');
+  
+  const sessionStr = localStorage.getItem('driAlertsession');
+  let session = null;
+  try { 
+    session = sessionStr ? JSON.parse(sessionStr) : null; 
+  } catch {}
+  
+  const loggedIn = !!session && session.user;
+  
+  if (loggedIn) {
+    loginBtns.forEach(btn => btn.style.display = 'none');
+    if (userMenu) userMenu.style.display = 'flex';
+    if (userNameSpan) userNameSpan.textContent = session.user.email.split('@')[0];
+  } else {
+    loginBtns.forEach(btn => btn.style.display = 'inline-flex');
+    if (userMenu) userMenu.style.display = 'none';
+  }
+  
+  // ADD THIS LOGOUT HANDLER RIGHT HERE 👇
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (logoutBtn) {
+    // Remove old listener to prevent duplicates
+    logoutBtn.onclick = null;
+    logoutBtn.onclick = () => {
+      localStorage.removeItem('driAlertsession');
+      this.updateNavbarForAuth(); // Update navbar immediately
+      this.showPage('main-page'); // Go back to home
+      this.showToast('success', 'Logged Out', 'You have been logged out successfully');
+    };
+  }
+}
+
 }
 
 // Initialize app when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    window.driAlert = new DriAlert();
+document.addEventListener("DOMContentLoaded", () => {
+  window.driAlert = new DriAlert();
+  // Update navbar immediately on page load
+  if (window.driAlert.updateNavbarForAuth) {
+    window.driAlert.updateNavbarForAuth();
+  }
 });
 
 // ===================================
@@ -1139,4 +1205,124 @@ async function refreshDashboard() {
 
     authManager.showToast('Dashboard refreshed successfully!', 'success');
 }
+
+// Toggle Language Dropdown
+function toggleLanguageDropdown() {
+    const panel = document.getElementById('language-panel');
+    panel.classList.toggle('active');
+}
+
+// Close language panel when clicking outside
+document.addEventListener('click', (e) => {
+    const panel = document.getElementById('language-panel');
+    const button = document.querySelector('.language-premium');
+    
+    if (panel && button && !panel.contains(e.target) && !button.contains(e.target)) {
+        panel.classList.remove('active');
+    }
+});
+
+// Google Translate Initialization - Must be defined globally
+function googleTranslateElementInit() {
+    new google.translate.TranslateElement({
+        pageLanguage: 'en',
+        includedLanguages: 'en,hi,kn,ta,te,ml,mr,bn,gu,pa',
+        layout: google.translate.TranslateElement.InlineLayout.SIMPLE,
+        autoDisplay: false
+    }, 'google_translate_element');
+}
+
+// Add this to your script.js file
+function initializeDetection() {
+    const video = document.getElementById('detection-video');
+    const canvas = document.getElementById('detection-canvas');
+    
+    if (video && canvas) {
+        // Initialize your detection engine here
+        // Connect monitor.js logic to these elements
+        console.log('Detection initialized');
+    }
+}
+
+// Call when detection section is shown
+document.querySelectorAll('.start-detection-link').forEach(btn => {
+    btn.addEventListener('click', () => {
+        setTimeout(initializeDetection, 500);
+    });
+});
+
+// Toggle Language Dropdown - After DOM loads
+document.addEventListener('DOMContentLoaded', function() {
+    const languageBtn = document.getElementById('languageBtn');
+    const panel = document.getElementById('language-panel');
+    
+    if (languageBtn && panel) {
+        languageBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            panel.classList.toggle('active');
+        });
+        
+        // Close panel when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!panel.contains(e.target) && !languageBtn.contains(e.target)) {
+                panel.classList.remove('active');
+            }
+        });
+        
+        // Close panel after language selection
+        const observer = new MutationObserver(function(mutations) {
+            const selectElement = panel.querySelector('.goog-te-combo');
+            if (selectElement) {
+                selectElement.addEventListener('change', function() {
+                    setTimeout(() => {
+                        panel.classList.remove('active');
+                    }, 500);
+                });
+                observer.disconnect();
+            }
+        });
+        
+        observer.observe(panel, { childList: true, subtree: true });
+    }
+});
+
+document.addEventListener("DOMContentLoaded", function() {
+  // Check if user is logged in
+  function checkLoginAndNavigate(destination) {
+    const session = localStorage.getItem('driAlertsession');
+    
+    if (!session) {
+      alert("Please login first!");
+      // Show login page
+      if (window.driAlert) {
+        window.driAlert.showPage('login-page');
+      }
+      return false;
+    }
+    
+    // User is logged in, allow navigation
+    if (destination === 'monitor') {
+      window.location.href = 'monitor.html';
+    }
+    return true;
+  }
+  
+  // Monitor button
+  const monitorBtn = document.getElementById("monitor-btn");
+  if (monitorBtn) {
+    monitorBtn.addEventListener("click", function(event) {
+      event.preventDefault();
+      checkLoginAndNavigate('monitor');
+    });
+  }
+  
+  // Get Started button
+  const getStartedBtn = document.getElementById("getstarted-btn");
+  if (getStartedBtn) {
+    getStartedBtn.addEventListener("click", function(event) {
+      event.preventDefault();
+      checkLoginAndNavigate('monitor');
+    });
+  }
+});
 

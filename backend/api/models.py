@@ -2,24 +2,23 @@ from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from bson import ObjectId
 import logging
-
 from mongodb_config import get_mongo_db
 
 logger = logging.getLogger(__name__)
 
 class User:
     def __init__(self, email, password, role='driver'):
-        self.email = email.lower().strip() 
+        self.email = email.lower().strip()
         self.password_hash = generate_password_hash(password)
         self.role = role
         self.is_active = True
         self.last_login = None
         self.created_at = datetime.utcnow()
         self.updated_at = datetime.utcnow()
-    
+
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
-    
+
     def save(self):
         """FIXED: Proper error handling and logging"""
         try:
@@ -27,7 +26,7 @@ class User:
             if db is None:
                 logger.error("❌ Database connection failed in save()")
                 return False
-            
+
             user_data = {
                 'email': self.email,
                 'password_hash': self.password_hash,
@@ -37,19 +36,15 @@ class User:
                 'created_at': self.created_at,
                 'updated_at': datetime.utcnow()
             }
-            
+
             if hasattr(self, '_id') and self._id:
-                # Update existing user
                 result = db.users.update_one({'_id': self._id}, {'$set': user_data})
                 logger.info(f"✅ User updated: {self.email}")
                 return True
             else:
-                # Create new user
                 result = db.users.insert_one(user_data)
                 self._id = result.inserted_id
                 logger.info(f"✅ User created: {self.email} with ID: {self._id}")
-                
-                # VERIFY the save worked
                 verification = db.users.find_one({'_id': self._id})
                 if verification:
                     logger.info(f"✅ Save verified: User {self.email} exists in database")
@@ -57,13 +52,12 @@ class User:
                 else:
                     logger.error(f"❌ Save failed: User {self.email} not found after insert")
                     return False
-                    
         except Exception as e:
             logger.error(f"❌ Error saving user {self.email}: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return False
-    
+
     @staticmethod
     def find_by_email(email):
         try:
@@ -71,10 +65,10 @@ class User:
             if db is None:
                 logger.error("❌ Database connection failed in find_by_email()")
                 return None
-            
+
             user_data = db.users.find_one({'email': email.lower().strip()})
             logger.info(f"🔍 Search for {email}: {'Found' if user_data else 'Not found'}")
-            
+
             if user_data:
                 user = User.__new__(User)
                 user._id = user_data['_id']
@@ -86,12 +80,11 @@ class User:
                 user.created_at = user_data['created_at']
                 user.updated_at = user_data.get('updated_at')
                 return user
-            
             return None
         except Exception as e:
             logger.error(f"❌ Error finding user {email}: {str(e)}")
             return None
-    
+
     def to_dict(self):
         return {
             'email': self.email,
@@ -100,14 +93,14 @@ class User:
             'role': self.role,
             'is_active': self.is_active
         }
-    
+
     @staticmethod
     def get_all_users():
         try:
             db = get_mongo_db()
             if db is None:
                 return []
-            
+
             users = []
             for user_data in db.users.find():
                 user = User.__new__(User)
@@ -120,41 +113,7 @@ class User:
                 user.created_at = user_data['created_at']
                 user.updated_at = user_data.get('updated_at')
                 users.append(user)
-            
             return users
         except Exception as e:
             logger.error(f"❌ Error getting users: {str(e)}")
             return []
-
-class DetectionEvent:
-    def __init__(self, user_id, status, confidence=0.0, sleep_score=0, ear_value=None, mar_value=None):
-        self.user_id = ObjectId(user_id) if isinstance(user_id, str) else user_id
-        self.status = status
-        self.confidence = confidence
-        self.sleep_score = sleep_score
-        self.ear_value = ear_value
-        self.mar_value = mar_value
-        self.timestamp = datetime.utcnow()
-    
-    def save(self):
-        try:
-            db = get_mongo_db()
-            if db is None:
-                return False
-            
-            event_data = {
-                'user_id': self.user_id,
-                'status': self.status,
-                'confidence': self.confidence,
-                'sleep_score': self.sleep_score,
-                'ear_value': self.ear_value,
-                'mar_value': self.mar_value,
-                'timestamp': self.timestamp
-            }
-            
-            result = db.detection_events.insert_one(event_data)
-            self._id = result.inserted_id
-            return True
-        except Exception as e:
-            logger.error(f"❌ Error saving event: {str(e)}")
-            return False

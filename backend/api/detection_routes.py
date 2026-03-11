@@ -3,9 +3,11 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
 import base64
 import logging
-
+from voice_service import voice_service
 from detection_model import DetectionEvent
 from models import User
+from detection import DrowsinessDetector
+from mongodb_config import get_mongo_db  # ← REQUIRED for heartbeat endpoints
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -75,20 +77,19 @@ def process_frame():
             return jsonify({'error': 'Detection failed'}), 500
         
         # FIXED: Format response to match frontend expectations
+        # REPLACE lines 88-97 with:
         response_data = {
-            'EAR': result.get('ear', 0.0),
-            'MAR': result.get('mar', 0.0),
-            'Score': result.get('drowsiness_score', 0),
-            'Status': result.get('risk_level', 'Unknown'),
-            'BlinkCount': 0,  # Add if you track blinks
-            'YawnCount': 0,   # Add if you track yawns
-            'alert_triggered': result.get('alert_triggered', False),
-            'face_detected': result.get('face_detected', False),
-            'session_duration': result.get('session_duration', 0.0),
-            'total_detections': result.get('total_detections', 0)
-        }
-        
-        logger.info(f"✅ Detection - EAR: {response_data['EAR']:.3f}, Score: {response_data['Score']}")
+            "earvalue": float(result.get("ear", 0.0)),
+            "marvalue": float(result.get("mar", 0.0)),
+            "sleepscore": int(result.get("drowsiness_score", 0)),      # ✅ FIXED: correct key
+            "status": result.get("risk_level", "Unknown"),              # ✅ FIXED: correct key
+            "alerttriggered": result.get("alert_triggered", False),     # ✅ FIXED: correct ke
+            "facedetected": result.get("face_detected", True),          # ✅ FIXED: correct key
+            "sessionduration": float(result.get("session_duration", 0.0)),
+            "totaldetections": int(result.get("total_detections", 0))
+            }
+                  
+        logger.info(f"✅ Detection - EAR: {response_data['earvalue']:.3f}, Score: {response_data['sleepscore']}")
         
         return jsonify(response_data), 200
         
@@ -100,57 +101,42 @@ def process_frame():
 @detection_bp.route('/save-detection', methods=['POST'])
 @jwt_required()
 def save_detection():
-    """Save detection event to database"""
     try:
         current_user = get_jwt_identity()
         data = request.get_json()
-        
-        # Extract detection data
+
+        image_data = data.get("image_data")  # ADD THIS LINE
+
         detection_data = {
-            "ear": data.get("eye_aspect_ratio", 0.0),
-            "mar": data.get("mouth_aspect_ratio", 0.0),
-            "eye_duration": data.get("eye_closure_duration", 0.0),
-            "yawn_duration": data.get("yawn_duration", 0.0),
-            "head_pose": data.get("head_pose", {}),
-            "drowsiness_score": data.get("drowsiness_score", 0.0),
-            "risk_level": data.get("risk_level", "Low"),
-            "alert_triggered": data.get("alert_triggered", False),
-            "session_id": data.get("session_id", ""),
-            "session_duration": data.get("session_duration", 0),
-            "total_detections": data.get("total_detections", 0),
+            'ear': float(data.get('eye_aspect_ratio') or 0),
+            'mar': float(data.get('mouth_aspect_ratio') or 0),
+            'drowsiness_score': float(data.get('drowsiness_score') or 0),
+            'risk_level': data.get('risk_level', 'Low'),
+            'status': data.get('status', 'UNKNOWN'),
+            'alert_triggered': data.get('alert_triggered', False),
+            'eye_duration': float(data.get('eye_closure_duration') or 0),
+            'yawn_duration': float(data.get('yawn_duration') or 0),
+            'session_id': data.get('session_id'),
+            'session_duration': float(data.get('session_duration') or 0),
+            'total_detections': int(data.get('total_detections') or 0)
         }
-        
-        image_data = data.get("image_data", None)
-        driver_name = data.get("driver_name", current_user)
-        
-        # Create detection event
+
         event = DetectionEvent(
             user_email=current_user,
-            driver_name=driver_name,
-            eye_aspect_ratio=detection_data["ear"],
-            mouth_aspect_ratio=detection_data["mar"],
-            eye_closure_duration=detection_data["eye_duration"],
-            yawn_duration=detection_data["yawn_duration"],
-            drowsiness_score=detection_data["drowsiness_score"],
-            risk_level=detection_data["risk_level"],
-            alert_triggered=detection_data["alert_triggered"],
-            session_id=detection_data["session_id"],
-            session_duration=detection_data["session_duration"],
-            total_detections=detection_data["total_detections"],
-            image_data=image_data,
+            driver_name=data.get('driver_name', current_user),
+            detection_data=detection_data,
+            image_data=image_data
         )
-        
+
         event_id = event.save()
-        
+
         return jsonify({
             "message": "Detection saved successfully",
             "event_id": event_id
         }), 201
-        
+
     except Exception as e:
-        print(f"❌ Error in save_detection: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"❌ Error in save_detection: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # ===== ROUTE 2: Get User Events =====
@@ -371,3 +357,88 @@ def set_user_inactive():
         print(f"⚠️ Error in set_user_inactive: {str(e)}")
         # Return success anyway for testing
         return jsonify({"message": "User deactivated (bypass)"}), 200
+    
+# detection_routes.py - Add monitoring heartbeat
+
+@detection_bp.route('/user/heartbeat', methods=['POST'])
+@jwt_required()
+def user_heartbeat():
+    """Update user's last_seen timestamp (heartbeat for active monitoring)"""
+    try:
+        current_user_email = get_jwt_identity()
+        
+        db = get_mongo_db()
+        if db is None:
+            return jsonify({"error": "Database not connected"}), 500
+        
+        # Update last_seen timestamp
+        db.users.update_one(
+            {'email': current_user_email},
+            {
+                '$set': {
+                    'last_seen': datetime.utcnow(),
+                    'is_monitoring': True
+                }
+            }
+        )
+        
+        return jsonify({"message": "Heartbeat received"}), 200
+    except Exception as e:
+        logger.error(f"Heartbeat error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@detection_bp.route('/user/stop-monitoring', methods=['POST'])
+@jwt_required()
+def stop_monitoring():
+    """Mark user as no longer monitoring"""
+    try:
+        current_user_email = get_jwt_identity()
+        
+        db = get_mongo_db()
+        if db is None:
+            return jsonify({"error": "Database not connected"}), 500
+        
+        db.users.update_one(
+            {'email': current_user_email},
+            {'$set': {'is_monitoring': False}}
+        )
+        
+        logger.info(f"User {current_user_email} stopped monitoring")
+        return jsonify({"message": "Monitoring stopped"}), 200
+    except Exception as e:
+        logger.error(f"Stop monitoring error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+    
+@detection_bp.route('/trigger-voice-alert', methods=['POST'])
+@jwt_required()
+def trigger_voice_alert():
+    """Trigger multilingual voice alert"""
+    try:
+        data = request.get_json()
+        alert_type = data.get('alert_type', 'drowsy')  # drowsy, yawning, high_risk
+        language = data.get('language', 'english')
+        
+        # Validate language
+        valid_languages = ['english', 'hindi', 'kannada', 'tamil', 'telugu', 
+                          'malayalam', 'marathi', 'gujarati', 'bengali']
+        
+        if language not in valid_languages:
+            language = 'english'
+        
+        # Play alert
+        success = voice_service.play_alert(alert_type, language)
+        
+        if success:
+            logger.info(f"✅ Voice alert triggered: {alert_type} in {language}")
+            return jsonify({
+                'message': 'Alert triggered',
+                'language': language,
+                'alert_type': alert_type
+            }), 200
+        else:
+            return jsonify({'error': 'Failed to play alert'}), 500
+            
+    except Exception as e:
+        logger.error(f"❌ Voice alert error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
